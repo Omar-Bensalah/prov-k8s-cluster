@@ -1,0 +1,84 @@
+---
+- name: Common configuration for all Kubernetes nodes
+  hosts: all
+  become: true
+  tasks:
+
+    - name: Install dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+        update_cache: yes
+
+    - name: Create keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Kubernetes APT keyring
+      shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Add Kubernetes APT repository
+      copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        content: |
+          deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /
+
+    - name: Update APT index
+      apt:
+        update_cache: yes
+
+    - name: Install containerd and Kubernetes tools
+      apt:
+        name:
+          - containerd
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+
+    - name: Create /etc/containerd directory
+      file:
+        path: /etc/containerd
+        state: directory
+        mode: '0755'
+
+    - name: Generate default containerd config
+      shell: |
+        containerd config default | sed 's/SystemdCgroup = false/SystemdCgroup = true/' | sudo tee /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: Restart and enable containerd
+      systemd:
+        name: containerd
+        state: restarted
+        enabled: yes
+
+    - name: Disable swap
+      shell: |
+        swapoff -a
+        sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+    - name: Enable and start kubelet
+      systemd:
+        name: kubelet
+        state: started
+        enabled: yes
+
+    - name: Hold Kubernetes packages to prevent unintended upgrades
+      shell: |
+        echo "{{ item }} hold" | sudo dpkg --set-selections
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl

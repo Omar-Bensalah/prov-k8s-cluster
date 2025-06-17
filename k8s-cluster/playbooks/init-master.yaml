@@ -1,0 +1,42 @@
+---
+- name: Initialize Kubernetes Master
+  hosts: k8s_master
+  become: yes
+  vars:
+    pod_network_cidr: "10.244.0.0/16"
+
+  tasks:
+    - name: Initialize the Kubernetes cluster
+      command: >
+        kubeadm init
+        --apiserver-advertise-address=192.168.56.10
+        --pod-network-cidr={{ pod_network_cidr }}
+      register: kubeadm_init
+      args:
+        creates: /etc/kubernetes/admin.conf
+
+    - name: Save join command
+      shell: |
+        kubeadm token create --print-join-command > /home/vagrant/join.sh
+      when: kubeadm_init.changed
+
+    - name: Copy admin.conf to vagrant user
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/vagrant/admin.conf
+        remote_src: yes
+        owner: vagrant
+        group: vagrant
+        mode: 0600
+
+    - name: Set kubeconfig for vagrant user
+      lineinfile:
+        path: /home/vagrant/.bashrc
+        line: "export KUBECONFIG=/home/vagrant/admin.conf"
+        create: yes
+
+    - name: Install Weave Net CNI plugin v2.8.1
+      become: yes
+      shell: kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s-1.11.yaml
+      environment:
+        KUBECONFIG: /home/vagrant/.kube/config
